@@ -45,15 +45,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             _timer.Interval = 100;
             _timer.Start();
 
-            if (!MainV2.comPort.MAV.param.ContainsKey("RCMAP_ROLL"))
+            if (MainV2.comPort.MAV.param.ContainsKey("RCMAP_ROLL"))
             {
-                chroll = 1;
-                chpitch = 2;
-                chthro = 3;
-                chyaw = 4;
-            }
-            else
-            {
+	        // pre-ArduPilot 4.6 firmware using RCMAP rather than RCn_OPTION
                 try
                 {
                     //setup bindings
@@ -68,6 +62,43 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                     this.Enabled = false;
                     return;
                 }
+            }
+	    else if (MainV2.comPort.MAV.param.ContainsKey("RC1_OPTION"))
+	    {
+	        // post-4.6 using RCn_OPTION
+		for (var a = 0; a < 32; a++) {
+			try
+			{
+			    var param_name = "RC" + a + "_OPTION";
+			    var option = (int)(float)MainV2.comPort.MAV.param[param_name];
+			    // magic values below are in RC_Channel.h
+			    switch (option)
+			    {
+			    case 201:
+				chroll = a;
+				break;
+			    case 202:
+				chpitch = a;
+				break;
+			    case 203:
+				chthro = a;
+				break;
+			    case 204:
+				chyaw = a;
+				break;
+			    }
+			}
+			catch (Exception)
+			{
+			}
+		}
+	    }
+            else
+            {
+                chroll = 1;
+                chpitch = 2;
+                chthro = 3;
+                chyaw = 4;
             }
 
             BARroll.DataBindings.Clear();
