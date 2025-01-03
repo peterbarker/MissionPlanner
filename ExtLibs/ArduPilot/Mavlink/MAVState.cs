@@ -172,6 +172,11 @@ namespace MissionPlanner
         public bool mavlinkv2 = false;
 
         /// <summary>
+        /// null = unprobed, true = use MAV_CMD_DO_SET_MISSION_CURRENT, false = use MISSION_SET_CURRENT message
+        /// </summary>
+        public bool? useDoSetMissionCurrent = null;
+
+        /// <summary>
         /// storage for whole paramater list
         /// </summary>
         [JsonIgnore]

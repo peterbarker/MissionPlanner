@@ -2456,6 +2456,17 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
         public async Task<bool> setWPCurrentAsync(byte sysid, byte compid, ushort index)
         {
+            // Already confirmed: use MAV_CMD_DO_SET_MISSION_CURRENT
+            if (MAVlist[sysid, compid].useDoSetMissionCurrent == true)
+                return await doCommandAsync(sysid, compid, MAV_CMD.DO_SET_MISSION_CURRENT, index, 0, 0, 0, 0, 0, 0)
+                    .ConfigureAwait(false);
+
+            // Unprobed: try the command and cache the result
+            if (MAVlist[sysid, compid].useDoSetMissionCurrent == null &&
+                await probeDoSetMissionCurrentAsync(sysid, compid, index).ConfigureAwait(false))
+                return true;
+
+            // Already confirmed unsupported, or probe fell through: use MISSION_SET_CURRENT
             giveComport = true;
             MAVLinkMessage buffer;
 
@@ -2498,6 +2509,65 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                         return true;
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Sends MAV_CMD_DO_SET_MISSION_CURRENT and waits for COMMAND_ACK.
+        /// Caches the vehicle's support state in MAVState.useDoSetMissionCurrent:
+        ///   ACCEPTED  → true  (waypoint set, return true)
+        ///   any other → false (fall back to MISSION_SET_CURRENT)
+        ///   timeout   → leave null (probe again next call)
+        /// </summary>
+        private async Task<bool> probeDoSetMissionCurrentAsync(byte sysid, byte compid, ushort index)
+        {
+            giveComport = true;
+
+            var cmd = new mavlink_command_long_t
+            {
+                target_system = sysid,
+                target_component = compid,
+                command = (ushort) MAV_CMD.DO_SET_MISSION_CURRENT,
+                param1 = index,
+            };
+
+            generatePacket((byte) MAVLINK_MSG_ID.COMMAND_LONG, cmd);
+            DateTime start = DateTime.Now;
+            int retrys = 3;
+
+            while (true)
+            {
+                if (!(start.AddMilliseconds(2000) > DateTime.Now))
+                {
+                    if (retrys > 0)
+                    {
+                        log.Info("setWPCurrent DO_SET_MISSION_CURRENT probe Retry " + retrys);
+                        generatePacket((byte) MAVLINK_MSG_ID.COMMAND_LONG, cmd);
+                        start = DateTime.Now;
+                        retrys--;
+                        continue;
+                    }
+
+                    log.Info("setWPCurrent DO_SET_MISSION_CURRENT probe timeout - falling back to MISSION_SET_CURRENT");
+                    giveComport = false;
+                    return false;
+                }
+
+                var buffer = await readPacketAsync().ConfigureAwait(false);
+                if (buffer.Length <= 5)
+                    continue;
+                if (buffer.msgid != (byte) MAVLINK_MSG_ID.COMMAND_ACK || buffer.sysid != sysid || buffer.compid != compid)
+                    continue;
+
+                var ack = buffer.ToStructure<mavlink_command_ack_t>();
+                if (ack.command != (ushort) MAV_CMD.DO_SET_MISSION_CURRENT)
+                    continue;
+
+                log.InfoFormat("setWPCurrent DO_SET_MISSION_CURRENT probe result {0}", (MAV_RESULT) ack.result);
+                bool accepted = ack.result == (byte) MAV_RESULT.ACCEPTED;
+                MAVlist[sysid, compid].useDoSetMissionCurrent = accepted;
+                giveComport = false;
+                return accepted;
             }
         }
 
