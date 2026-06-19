@@ -37,6 +37,9 @@ namespace MissionPlanner.ArduPilot
             double minlong = 180;
 
             int dolandstart = -1;
+            // indexes into pointlist of any DO_LAND_START markers, used to draw a
+            // distinct (non-flight) edge to the start of each landing sequence
+            var dolandstartidx = new List<int>();
 
             Func<MAVLink.MAV_FRAME, double, double, double> gethomealt = (altmode, lat, lng) =>
                 GetHomeAlt(altmode, home.Alt, lat, lng);
@@ -79,24 +82,26 @@ namespace MissionPlanner.ArduPilot
                     }
 
                     if (command == (ushort) MAVLink.MAV_CMD.DO_LAND_START && item.lat != 0 && item.lng != 0)
-                    {     
-                        pointlist.Add(new PointLatLngAlt(item.lat, item.lng,
-                            item.alt + gethomealt((MAVLink.MAV_FRAME) item.frame, item.lat, item.lng),
-                            (a + 1).ToString()));
-                        route.Add(pointlist[pointlist.Count - 1]);
-
-                        dolandstart = a;
-                        // draw everything before
+                    {
+                        // DO_LAND_START only marks the start of a landing sequence; the
+                        // vehicle never flies to its coordinate. Flush the route built up
+                        // so far as its own segment WITHOUT routing through this point.
                         if (route.Count > 0)
                         {
                             RegenerateWPRoute(route, home, false);
                             route.Clear();
                         }
-                        
-                        route.Add(pointlist[pointlist.Count - 1]);
+
+                        dolandstart = a;
+                        dolandstartidx.Add(pointlist.Count);
+                        pointlist.Add(new PointLatLngAlt(item.lat, item.lng,
+                            item.alt + gethomealt((MAVLink.MAV_FRAME) item.frame, item.lat, item.lng),
+                            (a + 1).ToString()));
+
+                        // draw the marker, but do not add it to the flight route
                         addpolygonmarker((a + 1).ToString(), item.lng, item.lat,
                             item.alt * altunitmultiplier, null, wpradius);
-                    } 
+                    }
                     else if ((command == (ushort) MAVLink.MAV_CMD.LAND || command == (ushort) MAVLink.MAV_CMD.VTOL_LAND) && item.lat != 0 && item.lng != 0)
                     {
                         pointlist.Add(new PointLatLngAlt(item.lat, item.lng,
@@ -354,6 +359,31 @@ namespace MissionPlanner.ArduPilot
 
             RegenerateWPRoute(route, home);
 
+            // Draw a distinct, non-flight edge from each DO_LAND_START marker to the
+            // first point of its landing sequence. This shows the association without
+            // implying the vehicle flies to the DO_LAND_START coordinate.
+            foreach (var idx in dolandstartidx)
+            {
+                var from = pointlist[idx];
+                PointLatLngAlt to = null;
+                for (int i = idx + 1; i < pointlist.Count; i++)
+                {
+                    if (pointlist[i] != null)
+                    {
+                        to = pointlist[i];
+                        break;
+                    }
+                }
+
+                if (from == null || to == null)
+                    continue;
+
+                var landstartroute = new GMapRoute("land start route");
+                landstartroute.Points.Add(from);
+                landstartroute.Points.Add(to);
+                landstartroute.Stroke = new Pen(Color.Magenta, 2) { DashStyle = DashStyle.Dot };
+                overlay.Routes.Add(landstartroute);
+            }
         }
 
         private double GetHomeAlt(MAVLink.MAV_FRAME altmode, double homealt, double lat, double lng)
