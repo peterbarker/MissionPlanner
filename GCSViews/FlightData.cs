@@ -1886,7 +1886,8 @@ namespace MissionPlanner.GCSViews
             {
                 ((Control) sender).Enabled = false;
 
-                MainV2.comPort.setWPCurrent(MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, 0); // set nav to
+                // restart from the first item, resetting DO_JUMP counters and any "mission complete" state
+                MainV2.comPort.setWPCurrent(MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, 0, reset: true);
             }
             catch
             {
