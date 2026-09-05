@@ -2449,24 +2449,37 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
             generatePacket((byte) MAVLINK_MSG_ID.MISSION_ACK, req);
         }
 
-        public bool setWPCurrent(byte sysid, byte compid, ushort index)
+        /// <summary>
+        /// Set the vehicle's current mission item.
+        /// </summary>
+        /// <param name="reset">also reset the mission state (DO_JUMP counters,
+        /// completed state); only possible with MAV_CMD_DO_SET_MISSION_CURRENT</param>
+        public bool setWPCurrent(byte sysid, byte compid, ushort index, bool reset = false)
         {
-            return setWPCurrentAsync(sysid, compid, index).AwaitSync();
+            return setWPCurrentAsync(sysid, compid, index, reset).AwaitSync();
         }
 
-        public async Task<bool> setWPCurrentAsync(byte sysid, byte compid, ushort index)
+        public async Task<bool> setWPCurrentAsync(byte sysid, byte compid, ushort index, bool reset = false)
         {
+            float resetParam = reset ? 1 : 0;
+
             // Already confirmed: use MAV_CMD_DO_SET_MISSION_CURRENT
             if (MAVlist[sysid, compid].useDoSetMissionCurrent == true)
-                return await doCommandAsync(sysid, compid, MAV_CMD.DO_SET_MISSION_CURRENT, index, 0, 0, 0, 0, 0, 0)
+                return await doCommandAsync(sysid, compid, MAV_CMD.DO_SET_MISSION_CURRENT, index, resetParam, 0, 0, 0, 0, 0)
                     .ConfigureAwait(false);
 
-            // Unprobed: try the command and cache the result
-            if (MAVlist[sysid, compid].useDoSetMissionCurrent == null &&
-                await probeDoSetMissionCurrentAsync(sysid, compid, index).ConfigureAwait(false))
-                return true;
+            // Unprobed: try the command and cache whether the vehicle supports it
+            if (MAVlist[sysid, compid].useDoSetMissionCurrent == null)
+            {
+                var probe = await probeDoSetMissionCurrentAsync(sysid, compid, index, resetParam).ConfigureAwait(false);
+                if (probe != null)
+                    return probe.Value;
+            }
 
-            // Already confirmed unsupported, or probe fell through: use MISSION_SET_CURRENT
+            // Already confirmed unsupported, or probe timed out: use MISSION_SET_CURRENT
+            if (reset)
+                log.Warn("setWPCurrent: vehicle does not support MAV_CMD_DO_SET_MISSION_CURRENT; mission state not reset");
+
             giveComport = true;
             MAVLinkMessage buffer;
 
@@ -2515,11 +2528,12 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
         /// <summary>
         /// Sends MAV_CMD_DO_SET_MISSION_CURRENT and waits for COMMAND_ACK.
         /// Caches the vehicle's support state in MAVState.useDoSetMissionCurrent:
-        ///   ACCEPTED  → true  (waypoint set, return true)
-        ///   any other → false (fall back to MISSION_SET_CURRENT)
-        ///   timeout   → leave null (probe again next call)
+        ///   ACCEPTED    → true  (waypoint set; returns true)
+        ///   UNSUPPORTED → false (returns null so the caller falls back to MISSION_SET_CURRENT)
+        ///   any other   → true  (the command is supported, this request failed; returns false)
+        ///   timeout     → leave null (returns null; probe again next call)
         /// </summary>
-        private async Task<bool> probeDoSetMissionCurrentAsync(byte sysid, byte compid, ushort index)
+        private async Task<bool?> probeDoSetMissionCurrentAsync(byte sysid, byte compid, ushort index, float resetParam)
         {
             giveComport = true;
 
@@ -2529,6 +2543,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 target_component = compid,
                 command = (ushort) MAV_CMD.DO_SET_MISSION_CURRENT,
                 param1 = index,
+                param2 = resetParam,
             };
 
             generatePacket((byte) MAVLINK_MSG_ID.COMMAND_LONG, cmd);
@@ -2550,7 +2565,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
 
                     log.Info("setWPCurrent DO_SET_MISSION_CURRENT probe timeout - falling back to MISSION_SET_CURRENT");
                     giveComport = false;
-                    return false;
+                    return null;
                 }
 
                 var buffer = await readPacketAsync().ConfigureAwait(false);
@@ -2564,10 +2579,16 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                     continue;
 
                 log.InfoFormat("setWPCurrent DO_SET_MISSION_CURRENT probe result {0}", (MAV_RESULT) ack.result);
-                bool accepted = ack.result == (byte) MAV_RESULT.ACCEPTED;
-                MAVlist[sysid, compid].useDoSetMissionCurrent = accepted;
                 giveComport = false;
-                return accepted;
+                if (ack.result == (byte) MAV_RESULT.UNSUPPORTED)
+                {
+                    MAVlist[sysid, compid].useDoSetMissionCurrent = false;
+                    return null;
+                }
+
+                // any other result means the vehicle understands the command
+                MAVlist[sysid, compid].useDoSetMissionCurrent = true;
+                return ack.result == (byte) MAV_RESULT.ACCEPTED;
             }
         }
 
