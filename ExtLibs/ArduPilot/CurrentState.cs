@@ -1627,7 +1627,17 @@ namespace MissionPlanner
                 try
                 {
                     float disttotal = 99999;
-                    var R = 6371e3;
+
+                    // As in ArduPilot (AC_PolyFence_loader::breached): the vehicle must be outside every
+                    // exclusion area, and inside every inclusion area - or, if FENCE_OPTIONS bit 1
+                    // (union of inclusion areas) is set, inside at least one of them
+
+                    // distance to the nearest exclusion boundary
+                    var exclusionDist = double.MaxValue;
+                    // distances to the boundaries of the inclusion areas the vehicle is inside
+                    var insideInclusionMin = double.MaxValue;
+                    var numInclusion = 0;
+                    var numInclusionOutside = 0;
 
                     var list = parent.fencepoints
                         .Where(a => a.Value.command != (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT)
@@ -1644,13 +1654,12 @@ namespace MissionPlanner
                             return a.Value.command == b.Value.command;
                         });
 
-                    // check all sublists
-                    foreach (var sublist in list)
+                    foreach (var sublist in list.Select(a => a.ToList()))
                     {
-                        // process circles
-                        if (sublist.Count() == 1)
+                        // circles
+                        if (sublist.Count == 1)
                         {
-                            var item = sublist.First().Value;
+                            var item = sublist[0].Value;
                             if (item.command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION)
                             {
                                 var lla = new PointLatLngAlt(item.x / 1e7,
@@ -1658,98 +1667,88 @@ namespace MissionPlanner
                                 var dist = lla.GetDistance(Location);
                                 if (dist < item.param1)
                                     return 0;
-                                disttotal = (float)Math.Min(dist - item.param1, disttotal);
+                                exclusionDist = Math.Min(exclusionDist, dist - item.param1);
                             }
                             else if (item.command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION)
                             {
                                 var lla = new PointLatLngAlt(item.x / 1e7,
                                     item.y / 1e7);
-
                                 var dist = lla.GetDistance(Location);
+                                numInclusion++;
                                 if (dist > item.param1)
-                                    return 0;
-                                disttotal = (float)Math.Min(item.param1 - dist, disttotal);
+                                {
+                                    numInclusionOutside++;
+                                }
+                                else
+                                {
+                                    insideInclusionMin = Math.Min(insideInclusionMin, item.param1 - dist);
+                                }
                             }
                         }
 
-                        if (sublist == null || sublist.Count() < 3)
+                        // polygons
+                        if (sublist.Count < 3)
                             continue;
 
-                        if (PolygonTools.isInside(
+                        var command = sublist[0].Value.command;
+                        if (command != (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION &&
+                            command != (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION)
+                            continue;
+
+                        var inside = PolygonTools.isInside(
                             sublist.CloseLoop().Select(a => new PolygonTools.Point(a.Value.y / 1e7, a.Value.x / 1e7)).ToList(),
-                            new PolygonTools.Point(Location.Lng, Location.Lat)))
+                            new PolygonTools.Point(Location.Lng, Location.Lat));
+
+                        if (command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION)
                         {
-                            if (sublist.First().Value.command ==
-                                (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION)
-                            {
+                            if (inside)
                                 return 0;
-                            }
+                            exclusionDist = Math.Min(exclusionDist, FencePolygonBoundaryDist(sublist));
                         }
                         else
                         {
-                            if (sublist.First().Value.command ==
-                                (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION)
+                            numInclusion++;
+                            if (!inside)
                             {
-                                return 0;
+                                numInclusionOutside++;
                             }
-                        }
-
-                        PointLatLngAlt lineStartLatLngAlt = null;
-                        // check all segments
-                        foreach (var mavlinkFencePointT in sublist.CloseLoop())
-                        {
-                            if (lineStartLatLngAlt == null)
+                            else
                             {
-                                lineStartLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
-                                    mavlinkFencePointT.Value.y / 1e7);
-                                continue;
+                                var dist = FencePolygonBoundaryDist(sublist);
+                                insideInclusionMin = Math.Min(insideInclusionMin, dist);
                             }
-
-                            // crosstrack distance
-                            var lineEndLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
-                                mavlinkFencePointT.Value.y / 1e7);
-
-                            var lineDist = lineStartLatLngAlt.GetDistance2(lineEndLatLngAlt);
-
-                            var distToLocation = lineStartLatLngAlt.GetDistance2(Location);
-                            var bearToLocation = lineStartLatLngAlt.GetBearing(Location);
-                            var lineBear = lineStartLatLngAlt.GetBearing(lineEndLatLngAlt);
-
-                            var angle = bearToLocation - lineBear;
-                            if (angle < 0)
-                                angle += 360;
-
-                            var alongline = Math.Cos(angle * MathHelper.deg2rad) * distToLocation;
-
-                            // check to see if our point is still within the line length
-                            if (alongline < 0 || alongline > lineDist)
-                            {
-                                lineStartLatLngAlt = lineEndLatLngAlt;
-                                continue;
-                            }
-
-                            var dXt2 = Math.Sin(angle * MathHelper.deg2rad) * distToLocation;
-
-                            var dXt = Math.Asin(Math.Sin(distToLocation / R) * Math.Sin(angle * MathHelper.deg2rad)) *
-                                      R;
-
-                            disttotal = (float)Math.Min(disttotal, Math.Abs(dXt2));
-
-                            lineStartLatLngAlt = lineEndLatLngAlt;
                         }
                     }
 
-                    // check also distance from the points - because if we are outside the polygon, we may be on a corner segment
-                    foreach (var sublist in list)
-                        foreach (var mavlinkFencePointT in sublist)
+                    if (numInclusion > 0)
+                    {
+                        // union and intersection only differ with more than one inclusion area
+                        var inclusionUnion = false;
+                        if (numInclusion > 1)
                         {
-                            if (mavlinkFencePointT.Value.command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION)
-                                continue;
-                            var pathpoint = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
-                                mavlinkFencePointT.Value.y / 1e7);
-                            var dXt2 = pathpoint.GetDistance(Location);
-                            disttotal = (float)Math.Min(disttotal, Math.Abs(dXt2));
+                            var options = parent?.param?["FENCE_OPTIONS"];
+                            inclusionUnion = options != null && ((int)options.Value & (1 << 1)) != 0;
                         }
+
+                        if (inclusionUnion)
+                        {
+                            // breached only when outside all of them
+                            if (numInclusionOutside == numInclusion)
+                                return 0;
+                        }
+                        else if (numInclusionOutside > 0)
+                        {
+                            // breached when outside any of them
+                            return 0;
+                        }
+
+                        // nearest boundary of the inclusion areas the vehicle is in, in both modes. This is
+                        // what ArduPilot uses for its FENCE_MARGIN warning; with union it can be smaller
+                        // than the distance to an actual breach
+                        disttotal = (float)Math.Min(disttotal, insideInclusionMin);
+                    }
+
+                    disttotal = (float)Math.Min(disttotal, exclusionDist);
 
                     return disttotal;
                 }
@@ -1758,6 +1757,66 @@ namespace MissionPlanner
                     return 0;
                 }
             }
+        }
+
+        /// <summary>
+        /// distance (m) from the vehicle to the nearest edge or vertex of a fence polygon
+        /// </summary>
+        private double FencePolygonBoundaryDist(
+            List<KeyValuePair<int, MAVLink.mavlink_mission_item_int_t>> polygon)
+        {
+            var disttotal = double.MaxValue;
+
+            PointLatLngAlt lineStartLatLngAlt = null;
+            // check all segments
+            foreach (var mavlinkFencePointT in polygon.CloseLoop())
+            {
+                if (lineStartLatLngAlt == null)
+                {
+                    lineStartLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                        mavlinkFencePointT.Value.y / 1e7);
+                    continue;
+                }
+
+                // crosstrack distance
+                var lineEndLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                    mavlinkFencePointT.Value.y / 1e7);
+
+                var lineDist = lineStartLatLngAlt.GetDistance2(lineEndLatLngAlt);
+
+                var distToLocation = lineStartLatLngAlt.GetDistance2(Location);
+                var bearToLocation = lineStartLatLngAlt.GetBearing(Location);
+                var lineBear = lineStartLatLngAlt.GetBearing(lineEndLatLngAlt);
+
+                var angle = bearToLocation - lineBear;
+                if (angle < 0)
+                    angle += 360;
+
+                var alongline = Math.Cos(angle * MathHelper.deg2rad) * distToLocation;
+
+                // check to see if our point is still within the line length
+                if (alongline < 0 || alongline > lineDist)
+                {
+                    lineStartLatLngAlt = lineEndLatLngAlt;
+                    continue;
+                }
+
+                var dXt2 = Math.Sin(angle * MathHelper.deg2rad) * distToLocation;
+
+                disttotal = Math.Min(disttotal, Math.Abs(dXt2));
+
+                lineStartLatLngAlt = lineEndLatLngAlt;
+            }
+
+            // check also distance from the points - because if we are outside the polygon, we may be on a corner segment
+            foreach (var mavlinkFencePointT in polygon)
+            {
+                var pathpoint = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                    mavlinkFencePointT.Value.y / 1e7);
+                disttotal = Math.Min(disttotal, pathpoint.GetDistance(Location));
+            }
+
+            return disttotal;
         }
 
         [GroupText("Position")]
