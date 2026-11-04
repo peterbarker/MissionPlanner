@@ -92,9 +92,9 @@ public partial class MAVLink
         new message_info(70, "RC_CHANNELS_OVERRIDE", 124, 18, 38, typeof( mavlink_rc_channels_override_t )),
         new message_info(73, "MISSION_ITEM_INT", 38, 37, 38, typeof( mavlink_mission_item_int_t )),
         new message_info(74, "VFR_HUD", 20, 20, 20, typeof( mavlink_vfr_hud_t )),
-        new message_info(75, "COMMAND_INT", 158, 35, 35, typeof( mavlink_command_int_t )),
-        new message_info(76, "COMMAND_LONG", 152, 33, 33, typeof( mavlink_command_long_t )),
-        new message_info(77, "COMMAND_ACK", 143, 3, 10, typeof( mavlink_command_ack_t )),
+        new message_info(75, "COMMAND_INT", 158, 35, 39, typeof( mavlink_command_int_t )),
+        new message_info(76, "COMMAND_LONG", 152, 33, 37, typeof( mavlink_command_long_t )),
+        new message_info(77, "COMMAND_ACK", 143, 3, 14, typeof( mavlink_command_ack_t )),
         new message_info(81, "MANUAL_SETPOINT", 106, 22, 22, typeof( mavlink_manual_setpoint_t )),
         new message_info(82, "SET_ATTITUDE_TARGET", 49, 39, 39, typeof( mavlink_set_attitude_target_t )),
         new message_info(83, "ATTITUDE_TARGET", 22, 37, 37, typeof( mavlink_attitude_target_t )),
@@ -20207,13 +20207,13 @@ public partial class MAVLink
     };
 
     
-    /// extensions_start 0
-    [StructLayout(LayoutKind.Sequential,Pack=1,Size=35)]
+    /// extensions_start 13
+    [StructLayout(LayoutKind.Sequential,Pack=1,Size=39)]
     ///<summary> Message encoding a command with parameters as scaled integers. Scaling depends on the actual command value. The command microservice is documented at https://mavlink.io/en/services/command.html </summary>
     public struct mavlink_command_int_t
     {
         /// packet ordered constructor
-        public mavlink_command_int_t(float param1,float param2,float param3,float param4,int x,int y,float z,/*MAV_CMD*/ushort command,byte target_system,byte target_component,/*MAV_FRAME*/byte frame,byte current,byte autocontinue) 
+        public mavlink_command_int_t(float param1,float param2,float param3,float param4,int x,int y,float z,/*MAV_CMD*/ushort command,byte target_system,byte target_component,/*MAV_FRAME*/byte frame,byte current,byte autocontinue,uint command_opaque_id) 
         {
             this.param1 = param1;
             this.param2 = param2;
@@ -20228,11 +20228,12 @@ public partial class MAVLink
             this.frame = frame;
             this.current = current;
             this.autocontinue = autocontinue;
+            this.command_opaque_id = command_opaque_id;
             
         }
         
         /// packet xml order
-        public static mavlink_command_int_t PopulateXMLOrder(byte target_system,byte target_component,/*MAV_FRAME*/byte frame,/*MAV_CMD*/ushort command,byte current,byte autocontinue,float param1,float param2,float param3,float param4,int x,int y,float z) 
+        public static mavlink_command_int_t PopulateXMLOrder(byte target_system,byte target_component,/*MAV_FRAME*/byte frame,/*MAV_CMD*/ushort command,byte current,byte autocontinue,float param1,float param2,float param3,float param4,int x,int y,float z,uint command_opaque_id) 
         {
             var msg = new mavlink_command_int_t();
 
@@ -20249,6 +20250,7 @@ public partial class MAVLink
             msg.x = x;
             msg.y = y;
             msg.z = z;
+            msg.command_opaque_id = command_opaque_id;
             
             return msg;
         }
@@ -20331,16 +20333,22 @@ public partial class MAVLink
         [Description("Not used (set 0).")]
         //[FieldOffset(34)]
         public  byte autocontinue;
+
+        /// <summary>ID chosen by the sender for this command, reflected in COMMAND_ACK.command_opaque_id. A resend of a command (sent again because no COMMAND_ACK was received) must use the same ID as the original. A command sent again after a COMMAND_ACK with a final result (e.g. MAV_RESULT_TEMPORARILY_REJECTED) is a new command and must use a new ID. A recipient may remember an ID while the command is in progress and for up to 60 seconds after its final result, and treat a command from the same sender repeating a remembered ID as a resend: it acknowledges it with the original result without executing it again. A recipient may forget an ID sooner, so a resend may still be executed again. An ID must not be reused for a different command (including the same command with different parameters) until 60 seconds after the final COMMAND_ACK of the original was received, and never if no final COMMAND_ACK was received. Counting up from a random starting value avoids reuse across sender restarts. 0: not set.   </summary>
+        [Units("")]
+        [Description("ID chosen by the sender for this command, reflected in COMMAND_ACK.command_opaque_id. A resend of a command (sent again because no COMMAND_ACK was received) must use the same ID as the original. A command sent again after a COMMAND_ACK with a final result (e.g. MAV_RESULT_TEMPORARILY_REJECTED) is a new command and must use a new ID. A recipient may remember an ID while the command is in progress and for up to 60 seconds after its final result, and treat a command from the same sender repeating a remembered ID as a resend: it acknowledges it with the original result without executing it again. A recipient may forget an ID sooner, so a resend may still be executed again. An ID must not be reused for a different command (including the same command with different parameters) until 60 seconds after the final COMMAND_ACK of the original was received, and never if no final COMMAND_ACK was received. Counting up from a random starting value avoids reuse across sender restarts. 0: not set.")]
+        //[FieldOffset(35)]
+        public  uint command_opaque_id;
     };
 
     
-    /// extensions_start 0
-    [StructLayout(LayoutKind.Sequential,Pack=1,Size=33)]
+    /// extensions_start 11
+    [StructLayout(LayoutKind.Sequential,Pack=1,Size=37)]
     ///<summary> Send a command with up to seven parameters to the MAV. COMMAND_INT is generally preferred when sending MAV_CMD commands that include positional information; it offers higher precision and allows the MAV_FRAME to be specified (which may otherwise be ambiguous, particularly for altitude). The command microservice is documented at https://mavlink.io/en/services/command.html </summary>
     public struct mavlink_command_long_t
     {
         /// packet ordered constructor
-        public mavlink_command_long_t(float param1,float param2,float param3,float param4,float param5,float param6,float param7,/*MAV_CMD*/ushort command,byte target_system,byte target_component,byte confirmation) 
+        public mavlink_command_long_t(float param1,float param2,float param3,float param4,float param5,float param6,float param7,/*MAV_CMD*/ushort command,byte target_system,byte target_component,byte confirmation,uint command_opaque_id) 
         {
             this.param1 = param1;
             this.param2 = param2;
@@ -20353,11 +20361,12 @@ public partial class MAVLink
             this.target_system = target_system;
             this.target_component = target_component;
             this.confirmation = confirmation;
+            this.command_opaque_id = command_opaque_id;
             
         }
         
         /// packet xml order
-        public static mavlink_command_long_t PopulateXMLOrder(byte target_system,byte target_component,/*MAV_CMD*/ushort command,byte confirmation,float param1,float param2,float param3,float param4,float param5,float param6,float param7) 
+        public static mavlink_command_long_t PopulateXMLOrder(byte target_system,byte target_component,/*MAV_CMD*/ushort command,byte confirmation,float param1,float param2,float param3,float param4,float param5,float param6,float param7,uint command_opaque_id) 
         {
             var msg = new mavlink_command_long_t();
 
@@ -20372,6 +20381,7 @@ public partial class MAVLink
             msg.param5 = param5;
             msg.param6 = param6;
             msg.param7 = param7;
+            msg.command_opaque_id = command_opaque_id;
             
             return msg;
         }
@@ -20442,16 +20452,22 @@ public partial class MAVLink
         [Description("0: First transmission of this command. 1-255: Confirmation transmissions (e.g. for kill command)")]
         //[FieldOffset(32)]
         public  byte confirmation;
+
+        /// <summary>ID chosen by the sender for this command, reflected in COMMAND_ACK.command_opaque_id. A resend of a command (sent again because no COMMAND_ACK was received) must use the same ID as the original. A command sent again after a COMMAND_ACK with a final result (e.g. MAV_RESULT_TEMPORARILY_REJECTED) is a new command and must use a new ID. A recipient may remember an ID while the command is in progress and for up to 60 seconds after its final result, and treat a command from the same sender repeating a remembered ID as a resend: it acknowledges it with the original result without executing it again. A recipient may forget an ID sooner, so a resend may still be executed again. An ID must not be reused for a different command (including the same command with different parameters) until 60 seconds after the final COMMAND_ACK of the original was received, and never if no final COMMAND_ACK was received. Counting up from a random starting value avoids reuse across sender restarts. 0: not set.   </summary>
+        [Units("")]
+        [Description("ID chosen by the sender for this command, reflected in COMMAND_ACK.command_opaque_id. A resend of a command (sent again because no COMMAND_ACK was received) must use the same ID as the original. A command sent again after a COMMAND_ACK with a final result (e.g. MAV_RESULT_TEMPORARILY_REJECTED) is a new command and must use a new ID. A recipient may remember an ID while the command is in progress and for up to 60 seconds after its final result, and treat a command from the same sender repeating a remembered ID as a resend: it acknowledges it with the original result without executing it again. A recipient may forget an ID sooner, so a resend may still be executed again. An ID must not be reused for a different command (including the same command with different parameters) until 60 seconds after the final COMMAND_ACK of the original was received, and never if no final COMMAND_ACK was received. Counting up from a random starting value avoids reuse across sender restarts. 0: not set.")]
+        //[FieldOffset(33)]
+        public  uint command_opaque_id;
     };
 
     
     /// extensions_start 2
-    [StructLayout(LayoutKind.Sequential,Pack=1,Size=10)]
+    [StructLayout(LayoutKind.Sequential,Pack=1,Size=14)]
     ///<summary> Report status of a command. Includes feedback whether the command was executed. The command microservice is documented at https://mavlink.io/en/services/command.html </summary>
     public struct mavlink_command_ack_t
     {
         /// packet ordered constructor
-        public mavlink_command_ack_t(/*MAV_CMD*/ushort command,/*MAV_RESULT*/byte result,byte progress,int result_param2,byte target_system,byte target_component) 
+        public mavlink_command_ack_t(/*MAV_CMD*/ushort command,/*MAV_RESULT*/byte result,byte progress,int result_param2,byte target_system,byte target_component,uint command_opaque_id) 
         {
             this.command = command;
             this.result = result;
@@ -20459,11 +20475,12 @@ public partial class MAVLink
             this.result_param2 = result_param2;
             this.target_system = target_system;
             this.target_component = target_component;
+            this.command_opaque_id = command_opaque_id;
             
         }
         
         /// packet xml order
-        public static mavlink_command_ack_t PopulateXMLOrder(/*MAV_CMD*/ushort command,/*MAV_RESULT*/byte result,byte progress,int result_param2,byte target_system,byte target_component) 
+        public static mavlink_command_ack_t PopulateXMLOrder(/*MAV_CMD*/ushort command,/*MAV_RESULT*/byte result,byte progress,int result_param2,byte target_system,byte target_component,uint command_opaque_id) 
         {
             var msg = new mavlink_command_ack_t();
 
@@ -20473,6 +20490,7 @@ public partial class MAVLink
             msg.result_param2 = result_param2;
             msg.target_system = target_system;
             msg.target_component = target_component;
+            msg.command_opaque_id = command_opaque_id;
             
             return msg;
         }
@@ -20513,6 +20531,12 @@ public partial class MAVLink
         [Description("Component which requested the command to be executed")]
         //[FieldOffset(9)]
         public  byte target_component;
+
+        /// <summary>command_opaque_id of the COMMAND_INT or COMMAND_LONG being acknowledged. 0 if that command did not set it, or if the recipient does not support this field.   </summary>
+        [Units("")]
+        [Description("command_opaque_id of the COMMAND_INT or COMMAND_LONG being acknowledged. 0 if that command did not set it, or if the recipient does not support this field.")]
+        //[FieldOffset(10)]
+        public  uint command_opaque_id;
     };
 
     
