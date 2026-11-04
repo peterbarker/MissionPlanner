@@ -2717,6 +2717,26 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 .AwaitSync();
         }
 
+        /// <summary>
+        /// last command_opaque_id given to a COMMAND_LONG/COMMAND_INT. Starts at a random value so ids sent
+        /// before a restart are unlikely to be reused while the vehicle may still remember them.
+        /// </summary>
+        private int _lastCommandOpaqueId = new Random().Next(int.MinValue, int.MaxValue);
+
+        /// <summary>
+        /// a new non-zero command_opaque_id. Retries of a command reuse the id it was first sent with.
+        /// </summary>
+        private uint NextCommandOpaqueId()
+        {
+            uint id;
+            do
+            {
+                id = unchecked((uint) Interlocked.Increment(ref _lastCommandOpaqueId));
+            } while (id == 0);
+
+            return id;
+        }
+
         public async Task<bool> doCommandAsync(uint sysid, byte compid, MAV_CMD actionid, float p1, float p2, float p3,
             float p4,
             float p5, float p6, float p7, bool requireack = true, Action uicallback = null)
@@ -2738,7 +2758,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 param4 = p4,
                 param5 = p5,
                 param6 = p6,
-                param7 = p7
+                param7 = p7,
+                command_opaque_id = NextCommandOpaqueId()
             };
 
             log.InfoFormat("doCommand cmd {0} {1} {2} {3} {4} {5} {6} {7}", actionid.ToString(), p1, p2, p3, p4, p5, p6,
@@ -2844,6 +2865,15 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             continue;
                         }
 
+                        // 0 is from firmware which doesn't reflect command_opaque_id
+                        if (ack.command_opaque_id != 0 && ack.command_opaque_id != req.command_opaque_id)
+                        {
+                            log.InfoFormat("doCommand cmd resp {0} - {1} - command_opaque_id {2} isn't {3}",
+                                (MAV_CMD) ack.command, (MAV_RESULT) ack.result, ack.command_opaque_id,
+                                req.command_opaque_id);
+                            continue;
+                        }
+
                         log.InfoFormat("doCommand cmd resp {0} - {1}", (MAV_CMD) ack.command, (MAV_RESULT) ack.result);
 
 
@@ -2902,7 +2932,8 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 z = p7,
                 autocontinue = 0,
                 current = 0,
-                frame = (byte) frame
+                frame = (byte) frame,
+                command_opaque_id = NextCommandOpaqueId()
             };
 
             log.InfoFormat("doCommandIntAsync cmd {0} {1} {2} {3} {4} {5} {6} {7}", actionid.ToString(), p1, p2, p3, p4,
@@ -2964,6 +2995,15 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             log.InfoFormat("doCommandIntAsync cmd resp {0} - {1} - Commands dont match",
                                 (MAV_CMD) ack.command,
                                 (MAV_RESULT) ack.result);
+                            continue;
+                        }
+
+                        // 0 is from firmware which doesn't reflect command_opaque_id
+                        if (ack.command_opaque_id != 0 && ack.command_opaque_id != req.command_opaque_id)
+                        {
+                            log.InfoFormat("doCommandIntAsync cmd resp {0} - {1} - command_opaque_id {2} isn't {3}",
+                                (MAV_CMD) ack.command, (MAV_RESULT) ack.result, ack.command_opaque_id,
+                                req.command_opaque_id);
                             continue;
                         }
 
